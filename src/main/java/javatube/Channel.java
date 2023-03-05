@@ -12,6 +12,7 @@ import java.util.regex.Pattern;
 
 public class Channel extends Playlist{
 
+    private final String channelUrl;
     private final String videosUrl;
     private final String shortsUrl;
     private final String streamsUrl;
@@ -26,7 +27,7 @@ public class Channel extends Playlist{
     public Channel(String inputUrl) throws Exception {
         super(inputUrl);
         url = inputUrl;
-        String channelUrl = "https://www.youtube.com" + extractUrl();
+        channelUrl = "https://www.youtube.com" + extractUrl();
 
         videosUrl = channelUrl + "/videos";
         shortsUrl = channelUrl + "/shorts";
@@ -35,18 +36,18 @@ public class Channel extends Playlist{
         communityUrl = channelUrl + "/community";
         featuredChannelUrl = channelUrl + "/channels";
         aboutUrl = channelUrl + "/about";
-
     }
+
     private String extractUrl() throws Exception {
         ArrayList<String> re = new ArrayList<>();
         re.add("(?:\\/(c)\\/([%\\d\\w_\\-]+)(\\/.*)?)");
         re.add("(?:\\/(channel)\\/([%\\w\\d_\\-]+)(\\/.*)?)");
         re.add("(?:\\/(u)\\/([%\\d\\w_\\-]+)(\\/.*)?)");
         re.add("(?:\\/(user)\\/([%\\w\\d_\\-]+)(\\/.*)?)");
-        re.add("(?:\\/(\\@)([%\\d\\w_\\-]+)(\\/.*)?)");
+        re.add("(?:\\/(\\@)([%\\d\\w_\\-\\.]+)(\\/.*)?)");
 
-        for (String s : re) {
-            Pattern pattern = Pattern.compile(s, Pattern.CASE_INSENSITIVE);
+        for (String regex : re) {
+            Pattern pattern = Pattern.compile(regex);
             Matcher matcher = pattern.matcher(url);
             if (matcher.find()){
                 if (Objects.equals(matcher.group(1), "@")){
@@ -60,7 +61,11 @@ public class Channel extends Playlist{
     }
 
     private void setHtmlUrl(String url){
-        htmlPage = url;
+        if(!Objects.equals(htmlPage, url)){
+            htmlPage = url;
+            html = null;
+            json = null;
+        }
     }
 
     private String getHtmlUrl(){
@@ -68,39 +73,57 @@ public class Channel extends Playlist{
     }
 
     @Override
-    public String baseData(String continuation){
+    protected String baseData(String continuation){
         return "{\"continuation\": \"" + continuation + "\", \"context\": {\"client\": {\"clientName\": \"WEB\",  \"visitorData\": \"" + visitorData + "\", \"clientVersion\": \"2.20221107.06.00\"}}}";
     }
 
     @Override
-    public String getHtml() throws IOException {
+    protected String setHtml() throws IOException {
         return InnerTube.downloadWebPage(getHtmlUrl());
     }
+
     @Override
-    public JSONArray extractVideos(JSONObject rawJson){
+    protected JSONArray extractVideos(JSONObject rawJson){
         JSONArray swap = new JSONArray();
         try {
             JSONArray importantContent;
             try {
                 JSONObject activeTab = new JSONObject();
                 for(Object tab : rawJson.getJSONObject("contents").getJSONObject("twoColumnBrowseResultsRenderer").getJSONArray("tabs")) {
-                    String tabUrl = new JSONObject(tab.toString()).getJSONObject("tabRenderer").getJSONObject("endpoint").getJSONObject("commandMetadata").getJSONObject("webCommandMetadata").getString("url");
+                    String tabUrl = new JSONObject(tab.toString()).getJSONObject("tabRenderer")
+                            .getJSONObject("endpoint")
+                            .getJSONObject("commandMetadata")
+                            .getJSONObject("webCommandMetadata")
+                            .getString("url");
                     if (tabUrl.substring(tabUrl.lastIndexOf("/") + 1).equals(getHtmlUrl().substring(getHtmlUrl().lastIndexOf("/") + 1))) {
                         activeTab = new JSONObject(tab.toString());
                         break;
                     }
                 }
 
-                visitorData = rawJson.getJSONObject("responseContext").getJSONObject("webResponseContextExtensionData").getJSONObject("ytConfigData").getString("visitorData");
+                visitorData = rawJson.getJSONObject("responseContext")
+                        .getJSONObject("webResponseContextExtensionData")
+                        .getJSONObject("ytConfigData")
+                        .getString("visitorData");
 
-                importantContent = activeTab.getJSONObject("tabRenderer").getJSONObject("content").getJSONObject("richGridRenderer").getJSONArray("contents");
+                importantContent = activeTab.getJSONObject("tabRenderer")
+                        .getJSONObject("content")
+                        .getJSONObject("richGridRenderer")
+                        .getJSONArray("contents");
 
             }catch (JSONException e){
-                importantContent = new JSONArray(new JSONObject(rawJson.getJSONArray("onResponseReceivedActions").get(0).toString()).getJSONObject("appendContinuationItemsAction").getJSONArray("continuationItems"));
+                importantContent = rawJson.getJSONArray("onResponseReceivedActions")
+                        .getJSONObject(0)
+                        .getJSONObject("appendContinuationItemsAction")
+                        .getJSONArray("continuationItems");
             }
 
             try{
-                String continuation = new JSONObject(importantContent.get(importantContent.length() - 1).toString()).getJSONObject("continuationItemRenderer").getJSONObject("continuationEndpoint").getJSONObject("continuationCommand").getString("token");
+                String continuation = importantContent.getJSONObject(importantContent.length() - 1)
+                        .getJSONObject("continuationItemRenderer")
+                        .getJSONObject("continuationEndpoint")
+                        .getJSONObject("continuationCommand")
+                        .getString("token");
                 JSONArray continuationEnd = new JSONArray(buildContinuationUrl(continuation));
 
                 for(int i = 0; i < importantContent.length(); i++){
@@ -113,7 +136,7 @@ public class Channel extends Playlist{
                     }
                 }
 
-            } catch (Exception e) {
+            } catch (JSONException e) {
                 for(int i = 0; i < importantContent.length(); i++){
                     swap.put(importantContent.get(i));
                 }
@@ -139,7 +162,6 @@ public class Channel extends Playlist{
         return extractVideosId();
     }
 
-
     private ArrayList<String> extractVideosId() throws Exception {
         JSONArray video = extractVideos(getJson());
         ArrayList<String> videosId = new ArrayList<>();
@@ -147,9 +169,17 @@ public class Channel extends Playlist{
             for(int i = 0; i < video.length(); i++){
                 try{
                     try {
-                        videosId.add("https://www.youtube.com/watch?v=" + new JSONObject(video.get(i).toString()).getJSONObject("richItemRenderer").getJSONObject("content").getJSONObject("videoRenderer").get("videoId").toString());
+                        videosId.add("https://www.youtube.com/watch?v=" + video.getJSONObject(i)
+                                .getJSONObject("richItemRenderer")
+                                .getJSONObject("content")
+                                .getJSONObject("videoRenderer")
+                                .getString("videoId"));
                     }catch (JSONException s){
-                        videosId.add("https://www.youtube.com/watch?v=" + new JSONObject(video.get(i).toString()).getJSONObject("richItemRenderer").getJSONObject("content").getJSONObject("reelItemRenderer").get("videoId").toString());
+                        videosId.add("https://www.youtube.com/watch?v=" + video.getJSONObject(i)
+                                .getJSONObject("richItemRenderer")
+                                .getJSONObject("content")
+                                .getJSONObject("reelItemRenderer")
+                                .getString("videoId"));
                     }
                 }catch (Exception ignored){
                 }
@@ -161,24 +191,32 @@ public class Channel extends Playlist{
     }
 
     public String getChannelName() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getString("title");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getString("title");
     }
 
     public String getChannelId() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getString("externalId");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getString("externalId");
     }
 
     public String getVanityUrl() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getString("vanityChannelUrl");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getString("vanityChannelUrl");
     }
 
     @Override
     public String getDescription() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getString("description");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getString("description");
     }
 
     @Override
@@ -186,25 +224,48 @@ public class Channel extends Playlist{
         setHtmlUrl(aboutUrl);
         int pos = getJson().getJSONObject("contents").getJSONObject("twoColumnBrowseResultsRenderer").getJSONArray("tabs").length() - 2;
         try {
-            return new JSONObject(new JSONObject(new JSONObject(getJson().getJSONObject("contents").getJSONObject("twoColumnBrowseResultsRenderer").getJSONArray("tabs").get(pos).toString()).getJSONObject("tabRenderer").getJSONObject("content").getJSONObject("sectionListRenderer").getJSONArray("contents").get(0).toString()).getJSONObject("itemSectionRenderer").getJSONArray("contents").get(0).toString()).getJSONObject("channelAboutFullMetadataRenderer").getJSONObject("viewCountText").getString("simpleText");
+            return getJson().getJSONObject("contents")
+                    .getJSONObject("twoColumnBrowseResultsRenderer")
+                    .getJSONArray("tabs")
+                    .getJSONObject(pos)
+                    .getJSONObject("tabRenderer")
+                    .getJSONObject("content")
+                    .getJSONObject("sectionListRenderer")
+                    .getJSONArray("contents")
+                    .getJSONObject(0)
+                    .getJSONObject("itemSectionRenderer")
+                    .getJSONArray("contents")
+                    .getJSONObject(0)
+                    .getJSONObject("channelAboutFullMetadataRenderer")
+                    .getJSONObject("viewCountText")
+                    .getString("simpleText");
         }catch (JSONException e){
             return null;
         }
     }
 
     public String getKeywords() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getString("keywords");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getString("keywords");
     }
 
     public JSONArray getAvailableCountryCodes() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getJSONArray("availableCountryCodes");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getJSONArray("availableCountryCodes");
     }
 
     public String getThumbnailUrl() throws Exception {
-        setHtmlUrl(url);
-        return new JSONObject(new JSONObject(getJson().toString()).getJSONObject("metadata").getJSONObject("channelMetadataRenderer").getJSONObject("avatar").getJSONArray("thumbnails").get(0).toString()).getString("url");
+        setHtmlUrl(channelUrl);
+        return getJson().getJSONObject("metadata")
+                .getJSONObject("channelMetadataRenderer")
+                .getJSONObject("avatar")
+                .getJSONArray("thumbnails")
+                .getJSONObject(0)
+                .getString("url");
     }
 
     public String getVideosUrl(){

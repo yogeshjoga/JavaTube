@@ -11,6 +11,7 @@ import java.util.regex.Pattern;
 import static java.lang.Math.min;
 
 public class Stream{
+
     private final String title;
     private final String url;
     private final Integer itag;
@@ -47,21 +48,24 @@ public class Stream{
             fps = stream.getInt("fps");
         }
         resolution = itagProfile.get("resolution");
-
     }
 
     private long setFileSize(String size) throws IOException {
         if (Objects.equals(size, null)) {
-            URL url = new URL(this.url);
-            HttpURLConnection http = (HttpURLConnection) url.openConnection();
-            http.setRequestMethod("HEAD");
+            if(!isOtf){
+                URL url = new URL(this.url);
+                HttpURLConnection http = (HttpURLConnection) url.openConnection();
+                http.setRequestMethod("HEAD");
 
-            try {
-                size = http.getHeaderFields().get("Content-Length").get(0);
-            } catch (NullPointerException e) {
+                try {
+                    size = http.getHeaderFields().get("Content-Length").get(0);
+                } catch (NullPointerException e) {
+                    size = "0";
+                }
+                http.disconnect();
+            }else {
                 size = "0";
             }
-            http.disconnect();
             return Long.parseLong(size);
         }
         return Long.parseLong(size);
@@ -107,12 +111,12 @@ public class Stream{
     }
 
     private Matcher mimeTypeCodec(String mimeTypeCodec) throws Exception {
-        Pattern pattern = Pattern.compile("(\\w+/\\w+);\\scodecs=\"([a-zA-Z-0-9.,\\s]*)\"", Pattern.CASE_INSENSITIVE);
+        Pattern pattern = Pattern.compile("(\\w+/\\w+);\\scodecs=\"([a-zA-Z-0-9.,\\s]*)\"");
         Matcher matcher = pattern.matcher(mimeTypeCodec);
         if (matcher.find()) {
             return matcher;
         }else {
-            throw new Exception("RegexMatcherError");
+            throw new Exception("RegexMatcherError: " + pattern);
         }
     }
 
@@ -124,20 +128,28 @@ public class Stream{
         System.out.println(value + "%");
     }
     public void download(String path) throws Exception {
-        startDownload(path, Stream::onProgress);
+        startDownload(path, title, Stream::onProgress);
     }
     public void download(String path, Consumer<Long> progress) throws Exception {
-        startDownload(path, progress);
+        startDownload(path, title, progress);
     }
-    private void startDownload(String path, Consumer<Long> progress) throws Exception {
+    public void download(String path, String fileName) throws Exception {
+        startDownload(path, fileName, Stream::onProgress);
+    }
+    public void download(String path, String fileName, Consumer<Long> progress) throws Exception {
+        startDownload(path, fileName, progress);
+    }
+    private void startDownload(String path, String fileName, Consumer<Long> progress) throws Exception {
         if(!isOtf){
-            String savePath = path + safeFileName(title) + "." + subType;
+            String savePath = path + safeFileName(fileName) + "." + subType;
             int startSize = 0;
             int stopPos;
             int defaultRange = 1048576;
             File f = new File(savePath);
             if(f.exists()){
-                f.delete();
+                if(!f.delete()){
+                    throw new IOException("Failed to delete existing output file: " + f.getName());
+                }
             }
             do {
                 stopPos = (int) min(startSize + defaultRange, fileSize);
@@ -153,45 +165,43 @@ public class Stream{
                 }
             } while (stopPos != fileSize);
         }else {
-            downloadOtf(progress);
+            downloadOtf(path, fileName, progress);
         }
-
     }
 
-    private void downloadOtf(Consumer<Long> progress) throws Exception {
+    private void downloadOtf(String path, String fileName, Consumer<Long> progress) throws Exception {
         int countChunk = 0;
-        ByteArrayOutputStream chunkReceived;
+        byte[] chunkReceived;
         int lastChunk = 0;
+        String savePath = path + safeFileName(fileName) + "." + subType;
 
-        File outputFile = new File(safeFileName(title) + "." + subType);
+        File outputFile = new File(savePath);
         if(outputFile.exists()){
-            outputFile.delete();
+            if(!outputFile.delete()){
+                throw new IOException("Failed to delete existing output file: " + outputFile.getName());
+            }
         }
         do {
             String chunk = url + "&sq=" + countChunk;
 
-            chunkReceived = InnerTube.postChunk(chunk);
+            chunkReceived = InnerTube.postChunk(chunk).toByteArray();
 
             if(countChunk == 0){
-                Pattern pattern = Pattern.compile("Segment-Count: (\\d*)", Pattern.CASE_INSENSITIVE);
-                Matcher matcher = pattern.matcher(chunkReceived.toString());
+                Pattern pattern = Pattern.compile("Segment-Count: (\\d*)");
+                Matcher matcher = pattern.matcher(new String(chunkReceived));
                 if (matcher.find()){
                     lastChunk = Integer.parseInt(matcher.group(1));
                 }else{
-                    throw new Exception("RegexMatcherError");
+                    throw new Exception("RegexMatcherError: " + pattern);
                 }
             }
-
             progress.accept((countChunk * 100L) / (lastChunk));
             countChunk = countChunk + 1;
-            try (
-                    FileOutputStream fos = new FileOutputStream(outputFile, true)) {
-                fos.write(chunkReceived.toByteArray());
+            try (FileOutputStream fos = new FileOutputStream(savePath, true)) {
+                fos.write(chunkReceived);
             }
         }while (countChunk <= lastChunk);
-
     }
-
 
     private Map<String, String> getFormatProfile(){
         Map<Integer, ArrayList<String>> itags = new HashMap<>();
@@ -293,7 +303,6 @@ public class Stream{
         itags.put(700, new ArrayList<>(){{add("1440p");add(null);}}); // MP4
         itags.put(701, new ArrayList<>(){{add("2160p");add(null);}}); // MP4
         itags.put(702, new ArrayList<>(){{add("4320p");add(null);}}); // MP4
-
 
         // dash audio
         itags.put(139, new ArrayList<>(){{add(null);add("48kbps");}}); // MP4
